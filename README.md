@@ -191,7 +191,7 @@ The analysis workflow comprises several steps:
 - Descriptive statistics, correlation results, hypothesis testing results.
 - Graphical visualizations saved in the `outputs/` folder.
 
----
+--
 
 ## **References**
 - Statistical methods: Pearson, Spearman, ADF test.
