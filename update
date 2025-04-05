@@ -1,0 +1,92 @@
+import geopandas as gpd
+import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
+from rasterio.plot import show
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from shapely.geometry import Point
+from rasterio.mask import mask
+import xgboost as xgb
+
+# ========== 1. Load Shapefile of Study Area ==========
+niger_delta_shp = "data/niger_river_delta_boundary.shp"
+aoi = gpd.read_file(niger_delta_shp)
+
+# ========== 2. Load Satellite Imagery ==========
+image_path = "data/sentinel_2_composite.tif"
+with rasterio.open(image_path) as src:
+    img = src.read()
+    profile = src.profile
+    transform = src.transform
+
+# Sentinel-2 bands for NDWI calculation: Green (B3) and NIR (B8)
+green_band = img[2]  # Assuming B3
+nir_band = img[7]    # Assuming B8
+
+# ========== 3. Calculate NDWI ==========
+ndwi = (green_band.astype(float) - nir_band.astype(float)) / (green_band + nir_band + 1e-10)
+ndwi = np.nan_to_num(ndwi)
+
+# ========== 4. Create Label Dataset (manually labeled or reference shapefile) ==========
+# Example: Sandbar locations shapefile (label = 1), Non-sandbar = 0
+sandbar_shp = "data/sandbars_labeled_points.shp"
+labels_gdf = gpd.read_file(sandbar_shp)
+labels_gdf = labels_gdf.to_crs(aoi.crs)
+
+# Sample NDWI values at point locations
+def extract_features(points_gdf, raster, transform, ndwi_layer):
+    features = []
+    labels = []
+    for _, row in points_gdf.iterrows():
+        x, y = row.geometry.x, row.geometry.y
+        row_idx, col_idx = ~transform * (x, y)
+        row_idx, col_idx = int(row_idx), int(col_idx)
+        try:
+            ndwi_val = ndwi_layer[row_idx, col_idx]
+            features.append([ndwi_val])
+            labels.append(row.label)  # Assuming 'label' column with 0 or 1
+        except IndexError:
+            continue
+    return np.array(features), np.array(labels)
+
+X, y = extract_features(labels_gdf, img, transform, ndwi)
+
+# ========== 5. Train Machine Learning Model ==========
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = xgb.XGBClassifier()
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+
+print("Classification Report:\n", classification_report(y_test, y_pred))
+
+# ========== 6. Apply Model to Classify Entire Image ==========
+rows, cols = ndwi.shape
+flat_ndwi = ndwi.reshape(-1, 1)
+flat_pred = model.predict(flat_ndwi)
+classified = flat_pred.reshape(rows, cols)
+
+# ========== 7. Save Classified Map ==========
+out_path = "output/sandbar_classification.tif"
+with rasterio.open(
+    out_path, 'w',
+    driver='GTiff',
+    height=rows,
+    width=cols,
+    count=1,
+    dtype='uint8',
+    crs=profile['crs'],
+    transform=profile['transform'],
+) as dst:
+    dst.write(classified.astype('uint8'), 1)
+
+print(f"Saved classified map to: {out_path}")
+
+# ========== 8. Visualize ==========
+plt.figure(figsize=(10, 6))
+plt.imshow(classified, cmap='gray')
+plt.title('Sandbar Classification Map')
+plt.colorbar(label='Class (0=Other, 1=Sandbar)')
+plt.show()
