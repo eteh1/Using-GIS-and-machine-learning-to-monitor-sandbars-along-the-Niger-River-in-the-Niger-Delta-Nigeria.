@@ -179,7 +179,7 @@ The analysis workflow comprises several steps:
 ### Execution
 1. Clone this repository:
     ```bash
-    git clone https://github.com/yourusername/sandbar-monitoring
+    git clone https://github.com/Akajiaku11/sandbar-monitoring
     cd sandbar-monitoring
     ```
 2. Run the analysis script:
